@@ -44,6 +44,7 @@ static void addnode (struct listnode **listroot, char *key, char *data);
 static void usage (void);
 
 static int verbose      = 0;
+static int scan_only    = 0;
 static int packreclen   = -1;
 static int encoding     = 11;
 static int byteorder    = -1;
@@ -148,6 +149,13 @@ parseSDR (char *sdrfile, MSTraceGroup *mstg)
     fprintf (stderr, "Error parsing %s\n", sdrfile);
 
     return -1;
+  }
+
+  /* Nothing more to do if only scanning SDR file */
+  if(scan_only)
+  {
+    fclose (ifp);
+    return 0;
   }
 
   /* Perform decimation steps requested */
@@ -278,12 +286,12 @@ sdr2group (FILE *ifp, MSTraceGroup *mstg, int format, char *sdrfile, int verbose
   }
 
   /* Report header details */
-  if (verbose)
+  if (verbose || scan_only)
   {
     ms_hptime2mdtimestr (MS_EPOCH2HPTIME (hblock.startTime), stime, 0);
     ms_hptime2mdtimestr (MS_EPOCH2HPTIME (hblock.lastTime), ltime, 0);
 
-    if (verbose < 2)
+    if (verbose < 2 && !scan_only)
     {
       fprintf (stderr, "%s: version %d, samps/sec: %d, %s - %s\n",
                sdrfile, headerversion, hblock.sampleRate,
@@ -291,16 +299,26 @@ sdr2group (FILE *ifp, MSTraceGroup *mstg, int format, char *sdrfile, int verbose
     }
     else
     {
-      fprintf (stderr, "  fileVersionFlags: %d\n", hblock.fileVersionFlags);
-      fprintf (stderr, "  sampleRate:      %d (samples/second)\n", hblock.sampleRate);
-      fprintf (stderr, "  numSamples:      %d\n", hblock.numSamples);
-      fprintf (stderr, "  numChannels:     %d\n", hblock.numChannels);
-      fprintf (stderr, "  numBlocks:       %d\n", hblock.numBlocks);
-      fprintf (stderr, "  lastBlockSize:   %d\n", hblock.lastBlockSize);
-      fprintf (stderr, "  startTime:       %d (%s)\n", hblock.startTime, stime);
-      fprintf (stderr, "  lastTime:        %d (%s)\n", hblock.lastTime, ltime);
-      fprintf (stderr, "  lastBlockOffset: %d\n", hblock.lastBlockOffset);
+      fprintf (stderr, "  fileVersionFlags: 0x%08X\n", hblock.fileVersionFlags);
+      fprintf (stderr, "  sampleRate:       %d (samples/second)\n", hblock.sampleRate);
+      fprintf (stderr, "  numSamples:       %d\n", hblock.numSamples);
+      fprintf (stderr, "  numChannels:      %d\n", hblock.numChannels);
+      fprintf (stderr, "  numBlocks:        %d\n", hblock.numBlocks);
+      fprintf (stderr, "  lastBlockSize:    %d\n", hblock.lastBlockSize);
+      fprintf (stderr, "  startTime:        %d (%s)\n", hblock.startTime, stime);
+      fprintf (stderr, "  lastTime:         %d (%s)\n", hblock.lastTime, ltime);
+      fprintf (stderr, "  lastBlockOffset:  %d\n", hblock.lastBlockOffset);
     }
+  }
+
+  if(scan_only) 
+  {
+    if(msr) 
+    {
+      msr->datasamples = 0;
+      msr_free (&msr); 
+    }
+    return 0;
   }
 
   /* Allocate 1-minute multiplexed "blocked" data buffer depending on data encoding */
@@ -348,11 +366,11 @@ sdr2group (FILE *ifp, MSTraceGroup *mstg, int format, char *sdrfile, int verbose
       continue;
 
     /* Report details */
-    if (verbose > 1)
+    if (verbose > 2)
     {
       ms_hptime2mdtimestr (MS_EPOCH2HPTIME (finfo->startTime), stime, 0);
 
-      if (verbose == 2)
+      if (verbose == 3)
       {
         fprintf (stderr, "  Data block (%d): %s, offset: %d, size: %d, julian: %d\n",
                  idx + 1, stime, finfo->filePosition, finfo->blockSize, finfo->julian);
@@ -407,7 +425,7 @@ sdr2group (FILE *ifp, MSTraceGroup *mstg, int format, char *sdrfile, int verbose
     }
 
     /* Report details */
-    if (verbose > 1)
+    if (verbose > 2)
     {
       ms_hptime2mdtimestr (MS_EPOCH2HPTIME (iblock->startTime), stime, 0);
 
@@ -561,7 +579,7 @@ decompressSDR (HeaderBlock *hblock, InfoBlock *iblock, int blocknum,
 
   byteCnt = iblock->blockSize - flagBlkSize (hblock->numSamples) - sizeof (InfoBlock);
 
-  if (verbose > 1)
+  if (verbose > 2)
     fprintf (stderr, "  Decompressing block size: %d, flag block size: %d, bytes: %d\n",
              iblock->blockSize, flagBlkSize (hblock->numSamples), byteCnt);
 
@@ -576,7 +594,7 @@ decompressSDR (HeaderBlock *hblock, InfoBlock *iblock, int blocknum,
     {
       *outPtr++ = *((int16_t *)inPtr);
 
-      if ((verbose > 1) && (*(outPtr - 1)) && (*((outPtr - 1)) < 128) && (*((outPtr - 1)) > -127))
+      if ((verbose > 2) && (*(outPtr - 1)) && (*((outPtr - 1)) < 128) && (*((outPtr - 1)) > -127))
       {
         tooShort++;
       }
@@ -614,7 +632,7 @@ decompressSDR (HeaderBlock *hblock, InfoBlock *iblock, int blocknum,
              blocknum);
   }
 
-  if (verbose > 1)
+  if (verbose > 2)
   {
     ratio = (double)samplesDecoded * 2.0 / (iblock->blockSize - flagBlkSize (hblock->numSamples) - sizeof (InfoBlock));
 
@@ -658,7 +676,7 @@ normalizeSDR24 (HeaderBlock *hblock, InfoBlock *iblock, int blocknum,
 
   byteCnt = iblock->blockSize - sizeof (InfoBlock);
 
-  if (verbose > 1)
+  if (verbose > 2)
     fprintf (stderr, "  Decompressing block size: %d, bytes: %d\n",
              iblock->blockSize, byteCnt);
 
@@ -690,7 +708,7 @@ normalizeSDR24 (HeaderBlock *hblock, InfoBlock *iblock, int blocknum,
              blocknum);
   }
 
-  if (verbose > 1)
+  if (verbose > 2)
   {
     fprintf (stderr, "  Decompressed %d samples (for %d channels)\n",
              samplesDecoded, hblock->numChannels);
@@ -847,6 +865,10 @@ parameter_proc (int argcount, char **argvec)
     else if (strncmp (argvec[optind], "-v", 2) == 0)
     {
       verbose += strspn (&argvec[optind][1], "v");
+    }
+    else if (strncmp (argvec[optind], "-R", 2) == 0)
+    {
+      scan_only = 1;
     }
     else if (strcmp (argvec[optind], "-C") == 0)
     {
@@ -1265,6 +1287,7 @@ usage (void)
            " -V              Report program version\n"
            " -h              Show this usage message\n"
            " -v              Be more verbose, multiple flags can be used\n"
+           " -R              Scan and report SDR file information only, then exit\n"
            " -C chanlist     List of channel numbers to extract (1-8), e.g. 1,2,3\n"
            " -D fact,fact,.. Decimate data by various factors (2-7), e.g. 5,4\n"
            "\n"
